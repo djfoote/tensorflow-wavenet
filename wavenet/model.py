@@ -279,9 +279,10 @@ class WaveNetModel(object):
 
         return skip_contribution, input_batch + transformed
 
-    def _create_network(self, input_batch):
+    def _create_network(self, input_batch, target='conv2'):
         '''Construct the WaveNet network.'''
         outputs = []
+        layer_responses = []
         current_layer = input_batch
 
         # Pre-process the input with a regular convolution
@@ -299,6 +300,7 @@ class WaveNetModel(object):
                     output, current_layer = self._create_dilation_layer(
                         current_layer, layer_index, dilation)
                     outputs.append(output)
+                    layer_responses.append(current_layer)
 
         with tf.name_scope('postprocessing'):
             # Perform (+) -> ReLU -> 1x1 conv -> ReLU -> 1x1 conv to
@@ -327,7 +329,7 @@ class WaveNetModel(object):
             if self.use_biases:
                 conv2 = tf.add(conv2, b2)
 
-        return conv2
+        return {'conv2': conv2, 'layer_responses': layer_responses}[target]
 
     def _create_generator(self, input_batch):
         '''Construct an efficient incremental generator.'''

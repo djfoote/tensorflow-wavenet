@@ -21,9 +21,17 @@ def load_generic_audio(directory, sample_rate):
     '''Generator that yields audio waveforms from the directory.'''
     files = find_files(directory)
     for filename in files:
-        audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
-        audio = audio.reshape(-1, 1)
-        yield audio, filename
+        yield load_audio_file(filename, sample_rate), filename
+
+
+def load_audio_file(filename, sample_rate):
+    audio, _ = librosa.load(filename, sr=sample_rate, mono=True)
+    audio = audio.reshape(-1, 1)
+    return audio
+
+
+def load_audio_files(filenames, sample_rate):
+    return [load_audio_file(filename, sample_rate) for filename in filenames]
 
 
 def load_vctk_audio(directory, sample_rate):
@@ -71,12 +79,6 @@ class AudioReader(object):
                                          ['float32'],
                                          shapes=[(None, 1)])
         self.enqueue = self.queue.enqueue([self.sample_placeholder])
-
-        # TODO Find a better way to check this.
-        # Checking inside the AudioReader's thread makes it hard to terminate
-        # the execution of the script, so we do it in the constructor for now.
-        if not find_files(audio_dir):
-            raise ValueError("No audio files found in '{}'.".format(audio_dir))
 
     def dequeue(self, num_elements):
         output = self.queue.dequeue_many(num_elements)
