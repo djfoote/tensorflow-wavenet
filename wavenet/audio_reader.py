@@ -30,8 +30,11 @@ def load_audio_file(filename, sample_rate):
     return audio
 
 
-def load_audio_files(filenames, sample_rate):
-    return [load_audio_file(filename, sample_rate) for filename in filenames]
+def load_audio_files(filenames, sample_rate, threshold=None):
+    audios = [load_audio_file(filename, sample_rate) for filename in filenames]
+    if threshold is not None:
+        audios = [trim_silence(audio, threshold) for audio in audios]
+    return audios
 
 
 def load_vctk_audio(directory, sample_rate):
