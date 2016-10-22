@@ -62,7 +62,7 @@ def style_transfer(
     with tf.Graph().as_default():
         print("Building model...")
         wavenet_model, saver = build_model_and_saver(wavenet_params, checkpoint)
-        content = content[10000:15000]
+        content = content
         # content features for content signal
         with tf.Session() as sess:
             print("Restoring model from checkpoint...")
@@ -94,9 +94,11 @@ def style_transfer(
         all_signals = []
         i = 0
         initial = tf.random_normal((1,) + content.shape)
+        print(initial.get_shape())
         initial, _ = wavenet_model.preprocess_input(initial)
         # content = tf.reshape(content, (-1, 1))
         with tf.Session() as sess:
+            print(initial.get_shape())
             signal = tf.Variable(initial)
             tf.initialize_variables([signal]).run()
             np_signal = signal.eval()[0]
@@ -125,11 +127,15 @@ def style_transfer(
         training_steps = []
         optimizer = tf.train.AdamOptimizer(learning_rate)
 
-        for sub_signal in all_signals:
-            curr_step = optimizer.minimize(content_loss, var_list=[sub_signal])
+        for i in np.arange(0, len(all_signals), 100):
+            curr_step = optimizer.minimize(content_loss, var_list = all_signals[i:i+100])
             training_steps.append(curr_step)
-            if i % 1000 == 0:
-                print (i)
+            print(i, len(all_signals))
+        # for sub_signal in all_signals:
+        #     curr_step = optimizer.minimize(content_loss, var_list=[sub_signal])
+        #     training_steps.append(curr_step)
+        #     if i % 1000 == 0:
+        #         print (i)
 
         # layer_responses = wavenet_model.layer_responses(signal, preprocess=False)
         # The preprocessing step is not differentiable
@@ -161,8 +167,8 @@ def style_transfer(
         with tf.Session() as sess:
             sess.run(tf.initialize_all_variables())
             saver.restore(sess, checkpoint)
-            for i in np.arange(len(all_signals)):
-                for k in np.arange(100):
+            for i in np.arange(len(training_steps)):
+                for k in np.arange(500):
                     train_steps[i].run()
                     print('loss: {}'.format(content_loss.eval()))
                 if i % 100 == 0:
@@ -174,11 +180,13 @@ def style_transfer(
                     #     not_one_hot, wavenet_model.quantization_channels).eval()
                     print(audio)
                     write_wav(audio, SAMPLE_RATE, output_path)
-                curr_signal = all_signals[i].eval()
-                max_idx = np.argmax(curr_signal)
+                curr_signal = all_signals[i*100:i*100+100].eval()
+                max_idx = np.argmax(curr_signal, axis = 0)
                 new_signal = np.zeros_like(curr_signal)
-                new_signal[max_idx] = 1
-                op = all_signals[i].assign(new_signal)
+                for j in range(len(new_signal)):
+                    new_signal[j, max_idx[j]] = 1
+                # new_signal[max_idx] = 1
+                op = all_signals[i*100:i*100+100].assign(new_signal)
                 sess.run([op])
 
 
