@@ -1,4 +1,5 @@
-from wavenet import WaveNetModel, load_audio_files
+from wavenet import WaveNetModel, load_audio_files, mu_law_decode
+from generate import write_wav
 
 import json
 import argparse
@@ -6,7 +7,7 @@ import argparse
 import tensorflow as tf
 import numpy as np
 
-WAVENET_PARAMS = './mostafa_wavenet_params.json'
+WAVENET_PARAMS = './davis_wavenet_params.json'
 CONTENT_WEIGHT = 5e0
 STYLE_WEIGHT = 1e2
 ITERATIONS = 1000
@@ -50,6 +51,7 @@ def style_transfer(
         checkpoint,
         content,
         style,
+        output_path,
         iterations,
         content_weight,
         style_weight,
@@ -67,61 +69,74 @@ def style_transfer(
             saver.restore(sess, checkpoint)
             print("Computing content features...")
             signal = tf.placeholder('float', shape=(1,) + content.shape)
-            layer_responses = wavenet_model._create_network(signal, target='layer_responses')
-            import pdb; pdb.set_trace()
-            content_features = layer_responses[CONTENT_LAYER].eval(
+            content_features = wavenet_model.layer_responses(signal)[CONTENT_LAYER].eval(
                 feed_dict={signal: np.array([content])})
 
         # style features for style signal
-        style_features = {}
-        with tf.Session() as sess:
-            print("Restoring model from checkpoint...")
-            saver.restore(sess, checkpoint)
-            print("Computing content features...")
-            signal = tf.placeholder('float', shape=(1,) + style.shape)
-            layer_responses = wavenet_model._create_network(signal, target='layer_responses')
-            for layer in STYLE_LAYERS:
-                features = layer_responses[layer].eval(feed_dict={signal: np.array([style])})
-                # Might need to reshape
-                gram = np.matmul(features.T, features) / features.size
-                style_features[layer] = gram
+        # style_features = {}
+        # with tf.Session() as sess:
+        #     print("Restoring model from checkpoint...")
+        #     saver.restore(sess, checkpoint)
+        #     print("Computing style features...")
+        #     signal = tf.placeholder('float', shape=(1,) + style.shape)
+        #     layer_responses = wavenet_model.layer_responses(signal)
+        #     style_targets = list(np.array(layer_responses)[STYLE_LAYERS])
+        #     start_time = time.time()
+        #     all_features = sess.run(style_targets, feed_dict={signal: np.array([style])})
+        #     for layer, features in zip(STYLE_LAYERS, all_features):
+        #         features = features.reshape(-1, features.shape[-1])
+        #         gram = np.matmul(features.T, features) / features.size
+        #         style_features[layer] = gram
 
+        print("Setting up optimization problem...")
         # define signal variable and set up backprop
         # Might need new graph? Hopefully handled by var_list for optimizer
-        initial = tf.random_normal(content.shape) * 0.256
-        signal = tf.Variable(initial)
-        layer_responses = wavenet_model._create_network(signal, target='layer_responses')
+        initial = tf.random_normal((1,) + content.shape)
+        initial, _ = wavenet_model.preprocess_input(initial)
+        signal = tf.Variable(initial, name='result')
+        layer_responses = wavenet_model.layer_responses(signal, preprocess=False)
+        # The preprocessing step is not differentiable
 
         # content loss
         content_loss = 2 * tf.nn.l2_loss(
             layer_responses[CONTENT_LAYER] - content_features) / content_features.size
 
         # style loss
-        style_loss = 0
-        for style_layer in STYLE_LAYERS:
-            x_layer = layer_responses[style_layer]
-            # From here...
-            _, height, width, number = map(lambda i: i.value, x_layer.get_shape())
-            size = height * width * number
-            feats = tf.reshape(x_layer, (-1, number))
-            gram = tf.matmul(tf.transpose(feats), feats) / size
-            style_gram = style_features[style_layer]
-            # ... to here is probably totally wrong; I haven't worked out the actual shapes
-            style_loss += 2 * tf.nn.l2_loss(gram - style_gram) / style_gram.size
+        # style_loss = 0
+        # for style_layer in STYLE_LAYERS:
+        #     x_layer = layer_responses[style_layer]
+        #     # From here...
+        #     _, height, width, number = map(lambda i: i.value, x_layer.get_shape())
+        #     size = height * width * number
+        #     feats = tf.reshape(x_layer, (-1, number))
+        #     gram = tf.matmul(tf.transpose(feats), feats) / size
+        #     style_gram = style_features[style_layer]
+        #     # ... to here is probably totally wrong; I haven't worked out the actual shapes
+        #     style_loss += 2 * tf.nn.l2_loss(gram - style_gram) / style_gram.size
 
         # overall loss
-        loss = content_weight * content_loss + style_weight * style_loss
+        # loss = content_weight * content_loss + style_weight * style_loss
 
         # optimizer setup
-        train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss, var_list=[signal])
+        train_step = tf.train.AdamOptimizer(learning_rate).minimize(content_loss, var_list=[signal])
 
         # optimization
         with tf.Session() as sess:
+            sess.run(tf.initialize_all_variables())
             saver.restore(sess, checkpoint)
-            tf.initialize_variables(var_list=[signal])
             for i in np.arange(iterations):
-                # TODO
-                pass
+                train_step.run()
+                print(i+1)
+                print('loss: {}'.format(content_loss.eval()))
+                if i % 10 == 0:
+                    reshaped = tf.reshape(signal, (-1, wavenet_model.quantization_channels))
+                    audio = mu_law_decode(
+                        reshaped.eval().argmax(axis=1), wavenet_model.quantization_channels).eval()
+                    # not_one_hot = np.where(reshaped.eval())[1]
+                    # audio = mu_law_decode(
+                    #     not_one_hot, wavenet_model.quantization_channels).eval()
+                    print(audio)
+                    write_wav(audio, SAMPLE_RATE, output_path)
 
 
 def main():
@@ -137,6 +152,7 @@ def main():
         checkpoint=args.checkpoint,
         content=content_signal,
         style=style_signal,
+        output_path=args.output,
         iterations=ITERATIONS,
         content_weight=CONTENT_WEIGHT,
         style_weight=STYLE_WEIGHT,

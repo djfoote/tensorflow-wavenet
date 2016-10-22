@@ -463,6 +463,20 @@ class WaveNetModel(object):
                 [1, self.quantization_channels])
             return tf.reshape(last, [-1])
 
+    def preprocess_input(self, input_batch):
+        input_batch = mu_law_encode(input_batch,
+                                    self.quantization_channels)
+
+        encoded = self._one_hot(input_batch)
+        if self.scalar_input:
+            network_input = tf.reshape(
+                tf.cast(input_batch, tf.float32),
+                [self.batch_size, -1, 1])
+        else:
+            network_input = encoded
+
+        return network_input, encoded
+
     def loss(self,
              input_batch,
              l2_regularization_strength=None,
@@ -473,17 +487,7 @@ class WaveNetModel(object):
         '''
         with tf.name_scope(name):
             # We mu-law encode and quantize the input audioform.
-            input_batch = mu_law_encode(input_batch,
-                                        self.quantization_channels)
-
-            encoded = self._one_hot(input_batch)
-            if self.scalar_input:
-                network_input = tf.reshape(
-                    tf.cast(input_batch, tf.float32),
-                    [self.batch_size, -1, 1])
-            else:
-                network_input = encoded
-
+            network_input, encoded = self.preprocess_input(input_batch)
             raw_output = self._create_network(network_input)
 
             with tf.name_scope('loss'):
@@ -518,3 +522,12 @@ class WaveNetModel(object):
                     tf.scalar_summary('total_loss', total_loss)
 
                     return total_loss
+
+    def layer_responses(self, input_batch, name='wavenet', preprocess=True):
+        with tf.name_scope(name):
+            if preprocess:
+                network_input, _ = self.preprocess_input(input_batch)
+            else:
+                network_input = input_batch
+            layer_responses = self._create_network(network_input, target='layer_responses')
+            return layer_responses
