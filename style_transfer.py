@@ -62,7 +62,7 @@ def style_transfer(
     with tf.Graph().as_default():
         print("Building model...")
         wavenet_model, saver = build_model_and_saver(wavenet_params, checkpoint)
-
+        content = content[10000:15000]
         # content features for content signal
         with tf.Session() as sess:
             print("Restoring model from checkpoint...")
@@ -91,15 +91,52 @@ def style_transfer(
         print("Setting up optimization problem...")
         # define signal variable and set up backprop
         # Might need new graph? Hopefully handled by var_list for optimizer
+        all_signals = []
+        i = 0
         initial = tf.random_normal((1,) + content.shape)
         initial, _ = wavenet_model.preprocess_input(initial)
-        signal = tf.Variable(initial, name='result')
+        # content = tf.reshape(content, (-1, 1))
+        with tf.Session() as sess:
+            signal = tf.Variable(initial)
+            tf.initialize_variables([signal]).run()
+            np_signal = signal.eval()[0]
+            print(np_signal.shape)
+        for timestep in np_signal:
+            sub_signal = tf.Variable(timestep)
+            all_signals.append(sub_signal)
+        signal = tf.concat(0, all_signals)
+        signal = tf.reshape(signal, (1, np_signal.shape[0], np_signal.shape[1]))
+
+        # for timestep in content:
+        #     initial = tf.random_normal((1,) + timestep.shape)
+        #     initial, _ = wavenet_model.preprocess_input(initial)
+        #     initial = tf.reshape(initial, (-1, 1))
+        #     sub_signal = tf.Variable(initial)
+        #     all_signals.append(sub_signal)
+        #     if i % 1000 == 0:
+        #         print(i)
+        #     i+=1
+
+        # signal = tf.reshape(tf.concat(0, all_signals), (1,  wavenet_model.quantization_channels, len(content)))
         layer_responses = wavenet_model.layer_responses(signal, preprocess=False)
+
+        content_loss = 2 * tf.nn.l2_loss(layer_responses[CONTENT_LAYER] - content_features) 
+
+        training_steps = []
+        optimizer = tf.train.AdamOptimizer(learning_rate)
+
+        for sub_signal in all_signals:
+            curr_step = optimizer.minimize(content_loss, var_list=[sub_signal])
+            training_steps.append(curr_step)
+            if i % 1000 == 0:
+                print (i)
+
+        # layer_responses = wavenet_model.layer_responses(signal, preprocess=False)
         # The preprocessing step is not differentiable
 
         # content loss
-        content_loss = 2 * tf.nn.l2_loss(
-            layer_responses[CONTENT_LAYER] - content_features) / content_features.size
+        # content_loss = 2 * tf.nn.l2_loss(
+            # layer_responses[CONTENT_LAYER] - content_features) / content_features.size + 0.00001*tf.reduce_sum(tf.abs(signal))
 
         # style loss
         # style_loss = 0
@@ -118,17 +155,17 @@ def style_transfer(
         # loss = content_weight * content_loss + style_weight * style_loss
 
         # optimizer setup
-        train_step = tf.train.AdamOptimizer(learning_rate).minimize(content_loss, var_list=[signal])
+        # train_step = tf.train.AdamOptimizer(learning_rate).minimize(content_loss, var_list=[signal])
 
         # optimization
         with tf.Session() as sess:
             sess.run(tf.initialize_all_variables())
             saver.restore(sess, checkpoint)
-            for i in np.arange(iterations):
-                train_step.run()
-                print(i+1)
-                print('loss: {}'.format(content_loss.eval()))
-                if i % 10 == 0:
+            for i in np.arange(len(all_signals)):
+                for k in np.arange(100):
+                    train_steps[i].run()
+                    print('loss: {}'.format(content_loss.eval()))
+                if i % 100 == 0:
                     reshaped = tf.reshape(signal, (-1, wavenet_model.quantization_channels))
                     audio = mu_law_decode(
                         reshaped.eval().argmax(axis=1), wavenet_model.quantization_channels).eval()
@@ -137,6 +174,13 @@ def style_transfer(
                     #     not_one_hot, wavenet_model.quantization_channels).eval()
                     print(audio)
                     write_wav(audio, SAMPLE_RATE, output_path)
+                curr_signal = all_signals[i].eval()
+                max_idx = np.argmax(curr_signal)
+                new_signal = np.zeros_like(curr_signal)
+                new_signal[max_idx] = 1
+                op = all_signals[i].assign(new_signal)
+                sess.run([op])
+
 
 
 def main():
