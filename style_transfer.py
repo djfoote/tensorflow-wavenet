@@ -6,6 +6,7 @@ import argparse
 
 import tensorflow as tf
 import numpy as np
+import librosa
 
 WAVENET_PARAMS = './davis_wavenet_params.json'
 CONTENT_WEIGHT = 5e0
@@ -122,7 +123,7 @@ def style_transfer(
         # signal = tf.reshape(tf.concat(0, all_signals), (1,  wavenet_model.quantization_channels, len(content)))
         layer_responses = wavenet_model.layer_responses(signal, preprocess=False)
 
-        content_loss = 2 * tf.nn.l2_loss(layer_responses[CONTENT_LAYER] - content_features) 
+        content_loss = 2 * tf.nn.l2_loss(layer_responses[CONTENT_LAYER] - content_features)
 
         training_steps = []
         optimizer = tf.train.AdamOptimizer(learning_rate)
@@ -181,14 +182,13 @@ def style_transfer(
                     print(audio)
                     write_wav(audio, SAMPLE_RATE, output_path)
                 curr_signal = all_signals[i*100:i*100+100].eval()
-                max_idx = np.argmax(curr_signal, axis = 0)
+                max_idx = np.argmax(curr_signal, axis=0)
                 new_signal = np.zeros_like(curr_signal)
                 for j in range(len(new_signal)):
                     new_signal[j, max_idx[j]] = 1
                 # new_signal[max_idx] = 1
                 op = all_signals[i*100:i*100+100].assign(new_signal)
                 sess.run([op])
-
 
 
 def main():
